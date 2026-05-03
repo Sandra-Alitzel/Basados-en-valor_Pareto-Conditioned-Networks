@@ -307,7 +307,7 @@ def crowding_distance(front: np.ndarray) -> np.ndarray:
 # --------------------------------------------------------------------- #
 def sample_target_return(
     front: np.ndarray,
-    noise_scale: float = 0.1,
+    noise_scale: float = 0.6,
     use_crowding: bool = True,
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
@@ -365,12 +365,9 @@ def sample_target_return(
     reference = front[idx].copy()
 
     # ---- 2. push the command outward --------------------------------- #
-    if noise_scale > 0.0 and front.shape[0] > 1:
-        spread = front.max(axis=0) - front.min(axis=0)
-        # Half-normal noise so the perturbation is non-negative on each axis.
-        noise = np.abs(rng.normal(0.0, 1.0, size=front.shape[1])) * (
-            noise_scale * spread
-        )
+    if noise_scale > 0.0:
+                noise = np.abs(rng.normal(0.0, 1.0, size=front.shape[1])) * noise_scale 
+        
     else:
         noise = np.zeros(front.shape[1], dtype=np.float64)
 

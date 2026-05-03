@@ -55,7 +55,7 @@ from src.pcn import pareto_front_indices              # noqa: E402
 DEFAULT_BENCHMARK_CFG: dict[str, Any] = {
     "env_id": "mo-halfcheetah-v5",      # used by PGMORL / mo-gymnasium
     "pcn_env_id": "HalfCheetah-v5",     # used by our wrapper
-    "n_seeds":  5,
+    "n_seeds":  2,
     "base_seed": 1000,
     "results_root": "results",
     # Reference point for the hypervolume indicator (MAXIMISATION convention).
