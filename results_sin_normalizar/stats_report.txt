@@ -1,0 +1,18 @@
+{
+  "pcn_n": 5,
+  "pcn_mean": 40073.93429888062,
+  "pcn_std": 17353.277895307012,
+  "pgmorl_n": 0,
+  "pgmorl_mean": NaN,
+  "pgmorl_std": NaN,
+  "alpha": 0.05,
+  "statistic_two_sided": NaN,
+  "p_two_sided": NaN,
+  "statistic_greater": NaN,
+  "p_greater": NaN,
+  "pcn_beats_pgmorl": false,
+  "ref_point": [
+    0.0,
+    -500.0
+  ]
+}
