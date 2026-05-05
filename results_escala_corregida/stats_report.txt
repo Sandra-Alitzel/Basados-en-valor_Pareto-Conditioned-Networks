@@ -1,0 +1,18 @@
+{
+  "pcn_n": 2,
+  "pcn_mean": 655.8432336004707,
+  "pcn_std": 32.5209824474544,
+  "pgmorl_n": 2,
+  "pgmorl_mean": 67094.82234519938,
+  "pgmorl_std": 889.6646105814443,
+  "alpha": 0.05,
+  "statistic_two_sided": -1.5491933384829668,
+  "p_two_sided": 0.12133525035848211,
+  "statistic_greater": -1.5491933384829668,
+  "p_greater": 0.9393323748207589,
+  "pcn_beats_pgmorl": false,
+  "ref_point": [
+    0.0,
+    -500.0
+  ]
+}

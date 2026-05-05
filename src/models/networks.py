@@ -1,27 +1,3 @@
-"""
-Return-conditioned neural networks for Pareto Conditioned Networks (PCN).
-
-Unlike standard actor-critic methods, PCN learns a *single* policy network
-that is **conditioned on a desired multi-objective return** (a.k.a. the
-"target return" or "command"). At inference time we tell the network "I want
-this return vector" and it imitates the trajectories from its replay buffer
-that achieved similar returns. This module implements the actor network for
-**continuous** action spaces (e.g. MuJoCo): it ingests
-
-    input = concat(state, target_return, target_horizon?)
-
-and outputs the parameters of a diagonal Gaussian distribution over actions,
-i.e. a mean ``mu`` and a standard deviation ``std`` of shape
-``(batch, action_dim)``.
-
-The original PCN paper (Reymond et al., AAMAS 2022) was formulated for
-discrete actions; the extension to continuous control via a Gaussian head is
-the standard adaptation used by ``morl-baselines`` and follow-up work.
-
-Weights are initialised orthogonally as recommended for on/off-policy deep
-RL (Engstrom et al., 2020) -- this dramatically reduces training-time
-variance, especially with deep MLPs and tanh activations.
-"""
 from __future__ import annotations
 
 from typing import Sequence, Tuple
@@ -31,9 +7,6 @@ import torch.nn as nn
 from torch.distributions import Independent, Normal
 
 
-# Numerical bounds for the log standard deviation. Wider than typical PPO
-# defaults because PCN's targets can push the policy into low-data regions
-# of the return space, where larger exploration noise is healthy.
 LOG_STD_MIN: float = -5.0
 LOG_STD_MAX: float = 2.0
 
@@ -51,12 +24,7 @@ def mlp(
     activation: type[nn.Module] = nn.Tanh,
     output_activation: type[nn.Module] | None = None,
 ) -> nn.Sequential:
-    """Build a fully-connected MLP with orthogonal init.
-
-    Hidden layers use ``gain = sqrt(2)`` (recommended for ``Tanh`` / ``ReLU``);
-    the output layer uses ``gain = 0.01`` to keep initial action means close
-    to zero, which is critical for stable continuous control at start-up.
-    """
+    
     layers: list[nn.Module] = []
     for i in range(len(sizes) - 1):
         is_last = i == len(sizes) - 2
@@ -72,42 +40,7 @@ def mlp(
 
 
 class ConditionedActor(nn.Module):
-    """Return-conditioned Gaussian policy for continuous control.
-
-    Parameters
-    ----------
-    obs_dim : int
-        Dimensionality of the observation/state vector ``s_t``.
-    action_dim : int
-        Dimensionality of the continuous action vector ``a_t``.
-    reward_dim : int
-        Number of objectives -- length of the target-return vector
-        ``R_target``.
-    hidden_sizes : sequence of int, optional
-        Sizes of the hidden layers of the shared trunk. Defaults to
-        ``(256, 256)``.
-    use_horizon : bool, optional
-        If ``True`` the network is also conditioned on a scalar desired
-        horizon ``h`` (number of remaining steps), as in the original PCN
-        paper. The horizon is concatenated to the input. Defaults to
-        ``True``.
-    state_dependent_std : bool, optional
-        If ``True`` the standard deviation is predicted from the input
-        (heteroscedastic Gaussian); otherwise it is a learnable global
-        parameter shared across states (homoscedastic, lower variance).
-        Defaults to ``True``.
-    activation : type[nn.Module], optional
-        Activation function used in the hidden layers. Defaults to
-        ``nn.Tanh`` (matches the orthogonal-init gain choice).
-
-    Notes
-    -----
-    The network input is the concatenation
-    ``[s_t, R_target, (h)]``. Calling :py:meth:`forward` returns the
-    ``(mu, std)`` tuple; :py:meth:`distribution` returns an ``Independent``
-    diagonal Normal for convenient ``log_prob`` / ``sample`` /``rsample``
-    operations.
-    """
+    
 
     def __init__(
         self,
@@ -194,18 +127,7 @@ class ConditionedActor(nn.Module):
         target_return: torch.Tensor,
         target_horizon: torch.Tensor | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Return ``(mu, std)`` of the diagonal Gaussian over actions.
-
-        Parameters
-        ----------
-        state : torch.Tensor
-            Shape ``(..., obs_dim)``.
-        target_return : torch.Tensor
-            Shape ``(..., reward_dim)`` -- desired multi-objective return.
-        target_horizon : torch.Tensor or None
-            Required iff ``use_horizon=True``. Shape ``(...)`` or
-            ``(..., 1)``.
-        """
+       
         x = self._build_input(state, target_return, target_horizon)
         h = self.trunk(x)
         mu = self.mu_head(h)
@@ -225,11 +147,6 @@ class ConditionedActor(nn.Module):
         target_return: torch.Tensor,
         target_horizon: torch.Tensor | None = None,
     ) -> Independent:
-        """Return an ``Independent(Normal(mu, std), 1)`` distribution.
-
-        ``Independent`` reinterprets the rightmost batch dim as event dim,
-        which gives a single ``log_prob`` / ``entropy`` per sample (correct
-        for diagonal multivariate Gaussians).
-        """
+        
         mu, std = self.forward(state, target_return, target_horizon)
         return Independent(Normal(mu, std), 1)

@@ -1,28 +1,3 @@
-"""
-Core data structures and algorithms for Pareto Conditioned Networks (PCN).
-
-This module implements three building blocks of PCN
-(Reymond et al., AAMAS 2022) adapted to continuous control:
-
-1. **Trajectory Experience Buffer** (:class:`ExperienceBuffer`).
-   Stores *full episodes*. Per-step multi-objective returns-to-go
-   ``G_t = sum_{k>=t} r_k`` (no discount, as in the original paper) are
-   computed once on insertion via a backwards pass, because PCN trains the
-   policy via supervised behavioural cloning conditioned on those
-   returns-to-go.
-
-2. **Non-dominated sorting** (:func:`pareto_front_indices`,
-   :func:`is_non_dominated`). Given the matrix of *episode* returns
-   ``R in R^{N x d}`` (sums of step rewards over each stored trajectory)
-   it extracts the indices of the Pareto-optimal trajectories under the
-   "more is better" convention for every objective.
-
-3. **Target-return sampling** (:func:`sample_target_return`). During
-   training PCN conditions the actor on *desired* returns. To force the
-   policy to "beat its own records" we sample a return vector from the
-   empirical Pareto front of the buffer and *push it outwards* by a noise
-   term proportional to the per-objective spread of the front.
-"""
 from __future__ import annotations
 
 from collections import deque
@@ -49,18 +24,7 @@ class Transition:
 
 @dataclass(slots=True)
 class Trajectory:
-    """A full episode, with per-step return-to-go pre-computed.
-
-    Attributes
-    ----------
-    transitions : list[Transition]
-        Time-ordered transitions of the episode.
-    episode_return : np.ndarray
-        ``sum_t r_t``, shape ``(reward_dim,)``. This is the vector used
-        for Pareto comparisons across trajectories.
-    length : int
-        Number of transitions (== episode horizon).
-    """
+   
     transitions: list[Transition]
     episode_return: np.ndarray
     length: int
@@ -74,26 +38,7 @@ class Trajectory:
 # Experience buffer
 # --------------------------------------------------------------------- #
 class ExperienceBuffer:
-    """Bounded FIFO buffer of complete trajectories.
-
-    Parameters
-    ----------
-    capacity : int
-        Maximum number of trajectories retained. Older trajectories are
-        evicted FIFO when ``len(self) == capacity``.
-    reward_dim : int
-        Dimensionality of the multi-objective reward vector. Used to
-        sanity-check inserts.
-
-    Notes
-    -----
-    The original PCN paper keeps only the *non-dominated* trajectories in
-    the buffer plus a small set of crowding-diverse points. This
-    implementation stores everything FIFO and exposes
-    :meth:`pareto_episode_indices` so callers can apply that policy on
-    top -- this keeps the buffer reusable for ablations.
-    """
-
+    
     def __init__(self, capacity: int, reward_dim: int) -> None:
         if capacity < 1:
             raise ValueError(f"capacity must be >= 1, got {capacity}")
@@ -112,12 +57,7 @@ class ExperienceBuffer:
         actions: Sequence[np.ndarray],
         rewards: Sequence[np.ndarray],
     ) -> Trajectory:
-        """Compute returns-to-go and store the trajectory.
-
-        ``states[t]``, ``actions[t]`` and ``rewards[t]`` describe step
-        ``t``; lengths must match. ``rewards[t]`` must be a vector of
-        shape ``(reward_dim,)``.
-        """
+       
         T = len(rewards)
         if not (len(states) == len(actions) == T):
             raise ValueError(
@@ -190,20 +130,7 @@ class ExperienceBuffer:
         pareto_weight: float = 0.0,
         rng: np.random.Generator | None = None,
     ) -> dict[str, np.ndarray]:
-        """Sample step-level transitions across stored episodes.
-
-        Returned dict has keys ``state``, ``action``, ``return_to_go``,
-        ``horizon_to_go``, each a stacked numpy array of size ``batch_size``.
-
-        Parameters
-        ----------
-        pareto_weight : float, optional
-            Fraction of the batch drawn from Pareto-front trajectories.
-            ``0.0`` = uniform over all steps (original behaviour).
-            ``0.75`` = 75% from Pareto-optimal trajectories, rest from all.
-            Oversampling Pareto trajectories ensures the policy learns to
-            differentiate behaviour across distinct conditioning targets.
-        """
+        
         if not self._traj:
             raise RuntimeError("Buffer is empty")
         rng = np.random.default_rng() if rng is None else rng
@@ -252,26 +179,7 @@ class ExperienceBuffer:
 # Pareto helpers
 # --------------------------------------------------------------------- #
 def is_non_dominated(returns: np.ndarray) -> np.ndarray:
-    """Boolean mask of Pareto-optimal rows of ``returns``.
-
-    Convention: **maximisation** on every objective. A point ``a`` is
-    *dominated* by ``b`` iff ``b >= a`` componentwise and ``b > a`` on at
-    least one component. The output mask is ``True`` for points that are
-    **not dominated** by any other point in the set.
-
-    Implementation is O(N^2) which is fine for the buffer sizes used by
-    PCN (a few hundred trajectories at most).
-
-    Parameters
-    ----------
-    returns : np.ndarray
-        Shape ``(N, d)``. May be empty.
-
-    Returns
-    -------
-    np.ndarray
-        Boolean mask of shape ``(N,)``.
-    """
+    
     returns = np.asarray(returns, dtype=np.float64)
     if returns.ndim != 2:
         raise ValueError(f"returns must be 2-D, got shape {returns.shape}")
@@ -333,37 +241,7 @@ def sample_target_return(
     use_crowding: bool = True,
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
-    """Sample a desired return vector to condition the next episode.
-
-    Strategy (matches the PCN paper's "augmented" sampling):
-
-    1. Pick a point ``R*`` from the empirical Pareto ``front``. If
-       ``use_crowding=True`` the probability is proportional to the
-       NSGA-II crowding distance, biasing exploration towards
-       under-represented regions of the front; otherwise picks uniformly.
-    2. Add Gaussian noise scaled by the per-objective spread of the
-       front, then **clip from below** at ``R*`` so the sampled command
-       *cannot be worse* than the chosen reference point on any
-       objective. This is what forces the network to keep beating its
-       own records.
-
-    Parameters
-    ----------
-    front : np.ndarray
-        Pareto front matrix, shape ``(M, d)``. Must be non-empty.
-    noise_scale : float, optional
-        Std of the additive noise as a fraction of the per-objective
-        spread of the front. Use ``0.0`` to sample exactly on the front.
-    use_crowding : bool, optional
-        Use crowding-distance-weighted sampling (default ``True``).
-    rng : np.random.Generator, optional
-        Random generator for reproducibility.
-
-    Returns
-    -------
-    np.ndarray
-        Target-return vector of shape ``(d,)``.
-    """
+   
     front = np.asarray(front, dtype=np.float64)
     if front.ndim != 2 or front.shape[0] == 0:
         raise ValueError(
