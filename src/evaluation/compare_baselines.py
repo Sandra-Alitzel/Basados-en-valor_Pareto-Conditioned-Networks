@@ -19,7 +19,7 @@ Pipeline
 
 Run as::
 
-    python -m src.evaluation.compare_baselines --n-seeds 5
+    python -m src.evaluation.compare_baselines --n-seeds 20
 
 The script is **idempotent**: each seed's directory is independent, so
 a crash mid-benchmark does not corrupt previously-completed runs.
@@ -55,24 +55,22 @@ from src.pcn import pareto_front_indices              # noqa: E402
 DEFAULT_BENCHMARK_CFG: dict[str, Any] = {
     "env_id": "mo-halfcheetah-v5",      # used by PGMORL / mo-gymnasium
     "pcn_env_id": "HalfCheetah-v5",     # used by our wrapper
-    "n_seeds":  2,
+    "n_seeds":  3,
     "base_seed": 1000,
     "results_root": "results",
     # Reference point for the hypervolume indicator (MAXIMISATION convention).
     # Must be component-wise dominated by every Pareto-optimal point.
-    # Both PCN and PGMORL operate on rewards divided by 100 (see
-    # MOHalfCheetahWrapper and the ``mo-halfcheetah-norm-v5`` registration
-    # in ``run_pgmorl_seed``), so episode returns live roughly in:
-    #   obj0 (reward_run)  ~ [-0.5, +2.5]
-    #   obj1 (reward_ctrl) ~ [-3.0,  0.0]
-    # We anchor the HV floor at (0, -5) -- strictly dominated by every
+    # Both PCN and PGMORL operate on raw (unscaled) rewards, so episode
+    # returns live roughly in:
+    #   obj0 (reward_run)  ~ [-50, +250]
+    #   obj1 (reward_ctrl) ~ [-300,  0]
+    # We anchor the HV floor at (0, -500) -- strictly dominated by every
     # reasonable front while leaving slack for noisier seeds.
-    "ref_point": (0.0, -5.0),
+    "ref_point": (0.0, -500.0),
     "pcn_overrides": {                   # passed to main.train()
         "total_iterations": 200,
         "num_envs": 4,
         "noise_scale": 0.60,             # default is 0.5 but our preliminary tests showed better performance with a slightly higher value; feel free to tune this further for your specific setup and random seeds
-
     },
     "pgmorl_kwargs": {                   # passed to PGMORL constructor
         "total_timesteps": 200_000,
@@ -119,50 +117,8 @@ def run_pgmorl_seed(seed: int, cfg: dict[str, Any]) -> np.ndarray:
     caller logs a NaN HV for this seed.
     """
     try:
-        import gymnasium as gym
-        import mo_gymnasium                                 # noqa: F401
-
-        # === START PGMORL REWARD NORMALISATION ===
-        # PCN trains on rewards / 100 (see MOHalfCheetahWrapper); for the
-        # comparison to be fair both methods must optimise the *same* scaled
-        # objective. We register a one-shot env id ``mo-halfcheetah-norm-v5``
-        # whose creator wraps mo-gymnasium's HalfCheetah and divides the
-        # *vector* reward by 100.
-        #
-        # Important: the entry_point MUST accept arbitrary **kwargs because
-        # PGMORL's internal PPO calls ``mo_gym.make(env_id, render_mode=...)``
-        # and forwards those kwargs to our creator.
-        env_id_norm = "mo-halfcheetah-norm-v5"
-
-        class _ScaleVectorReward(gym.Wrapper):
-            """Divide the (vector) reward by a constant scale.
-
-            Works for both scalar and vector (mo-gymnasium) rewards because
-            ``np.asarray(r) / scale`` broadcasts correctly in either case.
-            """
-
-            def __init__(self, env: gym.Env, scale: float = 100.0) -> None:
-                super().__init__(env)
-                self._scale = float(scale)
-                # Preserve the mo-gymnasium reward_space if present.
-                if hasattr(env, "reward_space"):
-                    self.reward_space = env.reward_space
-
-            def step(self, action):  # type: ignore[override]
-                obs, r, terminated, truncated, info = self.env.step(action)
-                r = np.asarray(r, dtype=np.float32) / self._scale
-                return obs, r, terminated, truncated, info
-
-        def _make_norm_env(**kwargs) -> gym.Env:
-            inner = mo_gymnasium.make("mo-halfcheetah-v5", **kwargs)
-            return _ScaleVectorReward(inner, scale=100.0)
-
-        if env_id_norm not in gym.registry:
-            gym.register(id=env_id_norm, entry_point=_make_norm_env)
-        # Force PGMORL to use the normalised env id from now on.
-        cfg["env_id"] = env_id_norm
-        # === END PGMORL REWARD NORMALISATION ===
-
+        import gymnasium as gym          # noqa: F401
+        import mo_gymnasium              # noqa: F401
         from morl_baselines.multi_policy.pgmorl.pgmorl import PGMORL
     except ModuleNotFoundError as e:
         raise ModuleNotFoundError(
@@ -199,19 +155,11 @@ def run_pgmorl_seed(seed: int, cfg: dict[str, Any]) -> np.ndarray:
         **pgmorl_kwargs,
     )
 
-    # NOTE: previously we monkey-patched ``agent.predictor.predict_next_evaluation``
-    # to swallow ValueErrors caused by inf/NaN in the rewards. With the /100
-    # reward normalisation in place the regression is numerically stable, so
-    # the patch is no longer needed and has been removed.
-
     agent.train(
         total_timesteps=timesteps,
         eval_env=eval_env,
         ref_point=np.asarray(cfg["ref_point"], dtype=np.float32),
     )
-
-
-
 
     # Extraer el frente de Pareto directamente de las evaluaciones numéricas
     try:

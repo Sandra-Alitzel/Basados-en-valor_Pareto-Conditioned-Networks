@@ -256,6 +256,7 @@ def bc_update(
     n_updates: int,
     device: torch.device,
     rng: np.random.Generator,
+    pareto_weight: float = 0.0,
 ) -> dict[str, float]:
     """Train the actor by negative-log-likelihood imitation of buffer
     actions, conditioned on the actual returns-to-go they achieved.
@@ -266,7 +267,7 @@ def bc_update(
     actor.train()
     losses: list[float] = []
     for _ in range(n_updates):
-        batch = buffer.sample_transitions(batch_size, rng=rng)
+        batch = buffer.sample_transitions(batch_size, pareto_weight=pareto_weight, rng=rng)
         s = torch.as_tensor(batch["state"], device=device)
         a = torch.as_tensor(batch["action"], device=device)
         g = torch.as_tensor(batch["return_to_go"], device=device)

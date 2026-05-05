@@ -187,42 +187,64 @@ class ExperienceBuffer:
     def sample_transitions(
         self,
         batch_size: int,
+        pareto_weight: float = 0.0,
         rng: np.random.Generator | None = None,
     ) -> dict[str, np.ndarray]:
-        """Uniformly sample step-level transitions across stored episodes.
+        """Sample step-level transitions across stored episodes.
 
         Returned dict has keys ``state``, ``action``, ``return_to_go``,
-        ``horizon_to_go``, each a stacked numpy array of size
-        ``batch_size``. This is the supervised-learning batch consumed by
-        PCN's behavioural-cloning loss.
+        ``horizon_to_go``, each a stacked numpy array of size ``batch_size``.
+
+        Parameters
+        ----------
+        pareto_weight : float, optional
+            Fraction of the batch drawn from Pareto-front trajectories.
+            ``0.0`` = uniform over all steps (original behaviour).
+            ``0.75`` = 75% from Pareto-optimal trajectories, rest from all.
+            Oversampling Pareto trajectories ensures the policy learns to
+            differentiate behaviour across distinct conditioning targets.
         """
         if not self._traj:
             raise RuntimeError("Buffer is empty")
         rng = np.random.default_rng() if rng is None else rng
-
-        # Build a flat index (traj_idx, step_idx) once and sample.
-        lengths = np.array([t.length for t in self._traj], dtype=np.int64)
-        cum = np.concatenate(([0], np.cumsum(lengths)))
-        total = int(cum[-1])
-        flat = rng.integers(0, total, size=batch_size)
-
-        traj_idx = np.searchsorted(cum, flat, side="right") - 1
-        step_idx = flat - cum[traj_idx]
-
-        states, actions, rtg, htg = [], [], [], []
         traj_list = list(self._traj)
-        for ti, si in zip(traj_idx, step_idx):
-            tr = traj_list[ti].transitions[si]
-            states.append(tr.state)
-            actions.append(tr.action)
-            rtg.append(tr.return_to_go)
-            htg.append(tr.horizon_to_go)
+
+        def _flat_sample(indices: np.ndarray, n: int) -> list:
+            lens = np.array([traj_list[i].length for i in indices], dtype=np.int64)
+            c = np.concatenate(([0], np.cumsum(lens)))
+            flat = rng.integers(0, int(c[-1]), size=n)
+            local_ti = np.searchsorted(c, flat, side="right") - 1
+            si = flat - c[local_ti]
+            return [traj_list[indices[lt]].transitions[s]
+                    for lt, s in zip(local_ti, si)]
+
+        all_idx = np.arange(len(traj_list))
+
+        if pareto_weight > 0.0:
+            pareto_idx = self.pareto_episode_indices()
+            if len(pareto_idx) > 0:
+                n_pareto = max(1, round(batch_size * pareto_weight))
+                n_rest = batch_size - n_pareto
+                transitions = _flat_sample(pareto_idx, n_pareto)
+                if n_rest > 0:
+                    transitions += _flat_sample(all_idx, n_rest)
+            else:
+                transitions = _flat_sample(all_idx, batch_size)
+        else:
+            # Original: uniform flat sampling proportional to episode length.
+            lengths = np.array([t.length for t in traj_list], dtype=np.int64)
+            cum = np.concatenate(([0], np.cumsum(lengths)))
+            flat = rng.integers(0, int(cum[-1]), size=batch_size)
+            traj_idx = np.searchsorted(cum, flat, side="right") - 1
+            step_idx = flat - cum[traj_idx]
+            transitions = [traj_list[ti].transitions[si]
+                           for ti, si in zip(traj_idx, step_idx)]
 
         return {
-            "state": np.stack(states, axis=0).astype(np.float32),
-            "action": np.stack(actions, axis=0).astype(np.float32),
-            "return_to_go": np.stack(rtg, axis=0).astype(np.float32),
-            "horizon_to_go": np.asarray(htg, dtype=np.float32),
+            "state": np.stack([t.state for t in transitions], axis=0).astype(np.float32),
+            "action": np.stack([t.action for t in transitions], axis=0).astype(np.float32),
+            "return_to_go": np.stack([t.return_to_go for t in transitions], axis=0).astype(np.float32),
+            "horizon_to_go": np.asarray([t.horizon_to_go for t in transitions], dtype=np.float32),
         }
 
 
@@ -366,8 +388,13 @@ def sample_target_return(
 
     # ---- 2. push the command outward --------------------------------- #
     if noise_scale > 0.0:
-                noise = np.abs(rng.normal(0.0, 1.0, size=front.shape[1])) * noise_scale 
-        
+        spread = front.max(axis=0) - front.min(axis=0)
+        # When the front is degenerate (single point or very narrow), fall back
+        # to a fraction of the mean return magnitude so the push is always
+        # meaningful regardless of absolute scale.
+        min_spread = np.abs(front).mean(axis=0) * 0.1 + 1.0
+        effective_spread = np.maximum(spread, min_spread)
+        noise = np.abs(rng.normal(0.0, 1.0, size=front.shape[1])) * (noise_scale * effective_spread)
     else:
         noise = np.zeros(front.shape[1], dtype=np.float64)
 
