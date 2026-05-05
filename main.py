@@ -66,16 +66,17 @@ DEFAULT_CFG: dict[str, Any] = {
     "max_episode_steps": 1000,        # HalfCheetah default
 
     # Buffer / PCN
-    "buffer_capacity": 200,           # # of trajectories
+    "buffer_capacity": 500,           # # of trajectories
     "reward_dim": 2,                  # [reward_run, reward_ctrl]
-    "target_noise_scale": 0.1,        # outward push when sampling R*
+    "target_noise_scale": 0.6,        # outward push when sampling R*
     "use_crowding": True,
-    "warmup_episodes": 8,             # random-target episodes before training
+    "warmup_episodes": 16,             # random-target episodes before training
 
     # Training loop
     "total_iterations": 500,
     "episodes_per_iter": 4,           # collected per outer iteration
-    "updates_per_iter": 50,           # SGD steps per outer iteration
+    "updates_per_iter": 100,           # SGD steps per outer iteration
+    "pareto_weight": 0.7, 
     "batch_size": 256,
     "lr": 3e-4,
 
@@ -354,9 +355,8 @@ def train(cfg: dict[str, Any] | None = None) -> None:
             if len(buffer) < cfg["warmup_episodes"]:
                 # Cold start: random commands so the buffer fills with
                 # a diverse mix of behaviours.
-                target_return = rng.normal(
-                    loc=0.0, scale=10.0, size=cfg["reward_dim"]
-                ).astype(np.float32)
+                target_return = rng.uniform(low=-2.0, high=2.0, size=cfg["reward_dim"]).astype(np.float32)
+
             else:
                 front = buffer.pareto_front()
                 target_return = sample_target_return(
@@ -393,6 +393,7 @@ def train(cfg: dict[str, Any] | None = None) -> None:
                     n_updates=cfg["updates_per_iter"],
                     device=device,
                     rng=rng,
+                    pareto_weight=cfg.get("pareto_weight", 0.7),
                 )
             else:
                 update_stats = {"bc_loss_mean": float("nan"),

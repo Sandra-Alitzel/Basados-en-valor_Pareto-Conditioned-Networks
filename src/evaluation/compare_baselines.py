@@ -66,7 +66,8 @@ DEFAULT_BENCHMARK_CFG: dict[str, Any] = {
     #   obj1 (reward_ctrl) ~ [-300,  0]
     # We anchor the HV floor at (0, -500) -- strictly dominated by every
     # reasonable front while leaving slack for noisier seeds.
-    "ref_point": (0.0, -500.0),
+    "ref_point": (0.0, -500.0),        # para PGMORL (escala original)
+    "pcn_ref_point": (0.0, -5.0),      # para PCN (escala ÷100)
     "pcn_overrides": {                   # passed to main.train()
         "total_iterations": 200,
         "num_envs": 4,
