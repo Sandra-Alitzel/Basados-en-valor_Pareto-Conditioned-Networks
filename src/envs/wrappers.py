@@ -189,9 +189,11 @@ def make_vector_envs(
     # Validate the name early so we fail fast with a clearer error.
     mp.get_context("spawn")
 
+    import platform
+    ctx = "spawn"  # único disponible en Windows, también correcto en Linux/Mac
     return AsyncVectorEnv(
         env_fns,
-        context="spawn",
+        context=ctx,
         shared_memory=False,
         copy=True,
     )

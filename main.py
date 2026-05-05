@@ -457,4 +457,6 @@ def train(cfg: dict[str, Any] | None = None) -> None:
 # Entry point — *must* be guarded for ``spawn`` workers to import safely
 # --------------------------------------------------------------------- #
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()  # necesario si algún día compilas a .exe
     train()
