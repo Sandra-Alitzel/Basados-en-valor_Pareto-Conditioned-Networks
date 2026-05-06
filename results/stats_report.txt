@@ -1,0 +1,19 @@
+{
+  "pcn_n": 5,
+  "pcn_mean": 49189.86923308846,
+  "pcn_std": 11004.636372075462,
+  "pgmorl_n": 3,
+  "pgmorl_mean": 59662.98267294033,
+  "pgmorl_std": 23725.439132336633,
+  "alpha": 0.05,
+  "statistic_two_sided": -0.4472135954999579,
+  "p_two_sided": 0.6547208460185769,
+  "statistic_greater": -0.4472135954999579,
+  "p_greater": 0.6726395769907115,
+  "pcn_beats_pgmorl": false,
+  "ref_point": [
+    0.0,
+    -500.0
+  ],
+  "note": "PCN fronts rescaled x100 before HV \u2014 same scale as PGMORL"
+}

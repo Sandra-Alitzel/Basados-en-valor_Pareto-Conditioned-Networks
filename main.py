@@ -62,7 +62,7 @@ from src.pcn import (                                     # noqa: E402
 DEFAULT_CFG: dict[str, Any] = {
     # Environment
     "env_id": "HalfCheetah-v5",
-    "num_envs": 4,
+    "num_envs": 8,
     "max_episode_steps": 1000,        # HalfCheetah default
 
     # Buffer / PCN

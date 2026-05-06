@@ -1,3 +1,21 @@
+"""
+Hypervolume indicator for multi-objective evaluation.
+
+Convention used throughout the project: **maximisation on every
+objective**. The hypervolume of a Pareto front ``F`` w.r.t. a reference
+point ``r`` is the Lebesgue measure of the region
+
+    { y in R^d  :  exists p in F  s.t.  r <= y <= p }
+
+i.e. the volume of the dominated region above the reference point. The
+reference point must be *dominated* by every point of the front; in
+practice we pick a vector slightly worse than the worst observed return
+on each axis.
+
+For ``d == 2`` we use a closed-form O(n log n) sweep. For higher
+dimensions we delegate to ``pymoo`` if available, otherwise fall back to
+a simple inclusion-exclusion that is correct (but exponential in ``d``).
+"""
 from __future__ import annotations
 
 import numpy as np

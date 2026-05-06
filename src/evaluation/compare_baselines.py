@@ -50,32 +50,43 @@ from src.pcn import pareto_front_indices              # noqa: E402
 
 
 # --------------------------------------------------------------------- #
+# Scale helper
+# --------------------------------------------------------------------- #
+def _rescale_pcn_front(front: np.ndarray) -> np.ndarray:
+    """Convierte frente de PCN de escala ÷100 a escala original MuJoCo.
+
+    El wrapper MOHalfCheetahWrapper divide ambos objetivos por 100 para
+    estabilizar el entrenamiento. Esta función deshace esa normalización
+    para que el HV de PCN sea comparable con el de PGMORL (misma escala).
+    """
+    if front.size == 0:
+        return front
+    return front * 100.0
+
+
+# --------------------------------------------------------------------- #
 # Defaults
 # --------------------------------------------------------------------- #
 DEFAULT_BENCHMARK_CFG: dict[str, Any] = {
     "env_id": "mo-halfcheetah-v5",      # used by PGMORL / mo-gymnasium
     "pcn_env_id": "HalfCheetah-v5",     # used by our wrapper
-    "n_seeds":  2,
+    "n_seeds":  5,
     "base_seed": 1000,
     "results_root": "results",
-    # Reference point for the hypervolume indicator (MAXIMISATION convention).
-    # Must be component-wise dominated by every Pareto-optimal point.
-    # Both PCN and PGMORL operate on raw (unscaled) rewards, so episode
-    # returns live roughly in:
+    # Ref point UNIFICADO en escala original MuJoCo para ambos algoritmos.
+    # PCN opera con rewards ÷100 internamente, pero sus frentes se
+    # rescalan ×100 antes de calcular el HV → comparación justa con PGMORL.
     #   obj0 (reward_run)  ~ [-50, +250]
-    #   obj1 (reward_ctrl) ~ [-300,  0]
-    # We anchor the HV floor at (0, -500) -- strictly dominated by every
-    # reasonable front while leaving slack for noisier seeds.
-    "ref_point": (0.0, -500.0),        # para PGMORL (escala original)
-    "pcn_ref_point": (0.0, -5.0),      # para PCN (escala ÷100)
+    #   obj1 (reward_ctrl) ~ [-300,   0]
+    "ref_point": (0.0, -500.0),
     "pcn_overrides": {                   # passed to main.train()
-        "total_iterations": 200,
-        "num_envs": 4,
-        "noise_scale": 0.60,             # default is 0.5 but our preliminary tests showed better performance with a slightly higher value; feel free to tune this further for your specific setup and random seeds
+        "total_iterations": 500,
+        "num_envs": 8,
+        "target_noise_scale": 0.60,
     },
     "pgmorl_kwargs": {                   # passed to PGMORL constructor
         "total_timesteps": 200_000,
-        "num_envs": 4,
+        "num_envs": 8,
     },
 }
 
@@ -231,28 +242,41 @@ def plot_hv_boxplot(
     pgmorl_hvs: np.ndarray,
     out_path: Path,
 ) -> None:
-    """Save a comparative box-plot of hypervolumes."""
-    fig, ax = plt.subplots(figsize=(6, 4.5))
+    """Save a comparative box-plot of hypervolumes (misma escala, mismo ref_point)."""
+    fig, ax = plt.subplots(figsize=(7, 5))
     data = [pcn_hvs, pgmorl_hvs]
     labels = ["PCN (ours)", "PGMORL"]
-    # ``tick_labels`` is the new name (matplotlib >= 3.9); fall back to
-    # the deprecated ``labels`` kwarg for older versions.
+
     try:
-        ax.boxplot(data, tick_labels=labels, showmeans=True)
+        bp = ax.boxplot(data, tick_labels=labels, patch_artist=True,
+                        widths=0.4,
+                        medianprops=dict(color="orange", linewidth=2))
     except TypeError:
-        ax.boxplot(data, labels=labels, showmeans=True)
-    # Overlay individual seeds for transparency.
-    for i, arr in enumerate(data, start=1):
+        bp = ax.boxplot(data, labels=labels, patch_artist=True,
+                        widths=0.4,
+                        medianprops=dict(color="orange", linewidth=2))
+
+    bp["boxes"][0].set_facecolor("steelblue")
+    bp["boxes"][0].set_alpha(0.5)
+    bp["boxes"][1].set_facecolor("orange")
+    bp["boxes"][1].set_alpha(0.3)
+
+    # Puntos individuales por seed + media
+    for i, (arr, color) in enumerate(zip(data, ["steelblue", "orange"]), 1):
         if arr.size:
-            x = np.full_like(arr, i, dtype=float) + np.random.uniform(
-                -0.05, 0.05, size=arr.size
-            )
-            ax.scatter(x, arr, alpha=0.6, s=18)
+            jitter = np.random.uniform(-0.05, 0.05, size=arr.size)
+            ax.scatter(i + jitter, arr, color=color, zorder=5, s=40, alpha=0.8)
+        if arr.size:
+            ax.scatter(i, np.mean(arr[np.isfinite(arr)]),
+                       marker="^", color="green", zorder=6, s=100)
+
     ax.set_ylabel("Hypervolume")
-    ax.set_title("PCN vs PGMORL — Hypervolume across seeds")
+    ax.set_title("PCN vs PGMORL — Hypervolume across seeds\n"
+                 "(misma escala, ref_point=(0, −500))")
     ax.grid(True, axis="y", alpha=0.3)
+    ax.set_xlim(0.3, 2.7)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=150, facecolor="white")
     plt.close(fig)
 
 
@@ -364,19 +388,21 @@ def run_benchmark(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     seeds = [cfg["base_seed"] + i for i in range(int(cfg["n_seeds"]))]
 
     # ---- 1. PCN ------------------------------------------------------ #
-    pcn_fronts: list[np.ndarray] = []
+    pcn_fronts: list[np.ndarray] = []   # escala original (×100) para plots
     pcn_hvs: list[float] = []
     for s in seeds:
         try:
-            front = run_pcn_seed(s, cfg)
+            front_raw = run_pcn_seed(s, cfg)   # escala ÷100
         except Exception:
             print(f"[PCN seed={s}] FAILED:\n{traceback.format_exc()}",
                   file=sys.stderr)
-            front = np.zeros((0, len(ref_point)), dtype=np.float32)
+            front_raw = np.zeros((0, len(ref_point)), dtype=np.float32)
+        front = _rescale_pcn_front(front_raw)  # ← rescalar a escala original
         pcn_fronts.append(front)
         hv = hypervolume(front, ref_point) if front.size else float("nan")
         pcn_hvs.append(hv)
-        print(f"[PCN seed={s}] HV = {hv}", flush=True)
+        print(f"[PCN seed={s}] HV = {hv:.1f}  (puntos: {len(front)})",
+              flush=True)
 
     # ---- 2. PGMORL --------------------------------------------------- #
     pgmorl_fronts: list[np.ndarray] = []
@@ -417,7 +443,10 @@ def run_benchmark(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
         results_root / "stats_report.txt",
     )
     report["ref_point"] = list(map(float, ref_point))
+    report["note"] = "PCN fronts rescaled x100 before HV — same scale as PGMORL"
     (results_root / "stats_report.txt").write_text(json.dumps(report, indent=2))
+    print(f"\nPCN    media={np.nanmean(pcn_hv_arr):.1f}  std={np.nanstd(pcn_hv_arr):.1f}")
+    print(f"PGMORL media={np.nanmean(pg_hv_arr):.1f}  std={np.nanstd(pg_hv_arr):.1f}")
     print("Stats report:", json.dumps(report, indent=2))
     return report
 
